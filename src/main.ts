@@ -13,6 +13,8 @@ class PitchScene extends Phaser.Scene {
   private ball!: Phaser.GameObjects.Arc;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private facing = new Phaser.Math.Vector2(1, 0);
+  private possessing = false;
+  private dribbleAngle = 0;
   private score: Score = resetScore();
   private pausedUntil = 0;
   private lastShotAt = -Infinity;
@@ -48,7 +50,9 @@ class PitchScene extends Phaser.Scene {
     this.ballBody.setDrag(feel.ballFriction);
     this.ballBody.setBounce(feel.ballBounce);
     this.playerBody.setBounce(feel.playerBallBounce);
-    this.physics.add.collider(this.player, this.ball);
+    this.physics.add.collider(this.player, this.ball, undefined, () =>
+      !this.possessing && this.time.now - this.lastShotAt >= feel.shotCooldownMs,
+    );
 
     this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.shoot(pointer.worldX, pointer.worldY));
@@ -59,7 +63,7 @@ class PitchScene extends Phaser.Scene {
   private get playerBody(): Phaser.Physics.Arcade.Body { return this.player.body as Phaser.Physics.Arcade.Body; }
   private get ballBody(): Phaser.Physics.Arcade.Body { return this.ball.body as Phaser.Physics.Arcade.Body; }
 
-  update(time: number): void {
+  update(time: number, delta: number): void {
     if (time < this.pausedUntil) return;
     const x = Number(this.keys.D.isDown || this.keys.RIGHT.isDown) - Number(this.keys.A.isDown || this.keys.LEFT.isDown);
     const y = Number(this.keys.S.isDown || this.keys.DOWN.isDown) - Number(this.keys.W.isDown || this.keys.UP.isDown);
@@ -69,14 +73,32 @@ class PitchScene extends Phaser.Scene {
     this.constrainPlayer();
 
     const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.ball.x, this.ball.y);
-    const controlling = distance <= feel.possessionDistance && this.ballBody.speed < feel.dribbleMaxSpeed;
-    if (controlling && direction.lengthSq() > 0) {
-      const targetX = this.player.x + this.facing.x * feel.dribbleTargetDistance;
-      const targetY = this.player.y + this.facing.y * feel.dribbleTargetDistance;
-      const toward = new Phaser.Math.Vector2(targetX - this.ball.x, targetY - this.ball.y).normalize();
-      this.ballBody.setAcceleration(toward.x * feel.dribbleAcceleration, toward.y * feel.dribbleAcceleration);
+    if (!this.possessing && time - this.lastShotAt >= feel.shotCooldownMs &&
+      distance <= feel.possessionDistance && this.ballBody.speed < feel.possessionCaptureMaxSpeed) {
+      this.possessing = true;
+      this.dribbleAngle = distance > 0 ? Phaser.Math.Angle.Between(this.player.x, this.player.y, this.ball.x, this.ball.y) : this.facing.angle();
+    }
+    if (this.possessing) {
+      const previousAngle = this.dribbleAngle;
+      const maxTurn = Phaser.Math.DegToRad(feel.dribbleTurnRateDegrees) * Math.min(delta, 50) / 1000;
+      const turn = Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(this.facing.angle() - previousAngle), -maxTurn, maxTurn);
+      this.dribbleAngle = Phaser.Math.Angle.Wrap(previousAngle + turn);
+      const offsetX = Math.cos(this.dribbleAngle) * feel.dribbleTargetDistance;
+      const offsetY = Math.sin(this.dribbleAngle) * feel.dribbleTargetDistance;
+      const targetX = this.player.x + offsetX;
+      const targetY = this.player.y + offsetY;
+      const seconds = Math.max(delta, 1) / 1000;
+      const orbitalX = (Math.cos(this.dribbleAngle) - Math.cos(previousAngle)) * feel.dribbleTargetDistance / seconds;
+      const orbitalY = (Math.sin(this.dribbleAngle) - Math.sin(previousAngle)) * feel.dribbleTargetDistance / seconds;
+      this.ballBody.setVelocity(
+        this.playerBody.velocity.x + orbitalX + (targetX - this.ball.x) * feel.dribbleFollowGain,
+        this.playerBody.velocity.y + orbitalY + (targetY - this.ball.y) * feel.dribbleFollowGain,
+      );
+      this.ballBody.setDrag(0);
+      this.ballBody.setAcceleration(0);
       this.ballBody.setMaxVelocity(feel.dribbleMaxSpeed);
     } else {
+      this.ballBody.setDrag(feel.ballFriction);
       this.ballBody.setAcceleration(0);
       this.ballBody.setMaxVelocity(feel.kickPowerMax);
     }
@@ -89,8 +111,7 @@ class PitchScene extends Phaser.Scene {
   private shoot(targetX?: number, targetY?: number): void {
     const now = this.time.now;
     if (now < this.pausedUntil || now - this.lastShotAt < feel.shotCooldownMs) return;
-    if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.ball.x, this.ball.y) > feel.possessionDistance) return;
-    if (this.ballBody.speed > feel.dribbleMaxSpeed) return;
+    if (!this.possessing) return;
     const aim = targetX === undefined ? this.facing.clone() : new Phaser.Math.Vector2(targetX - this.ball.x, targetY! - this.ball.y).normalize();
     if (aim.lengthSq() === 0) aim.copy(this.facing);
     const angle = Phaser.Math.Angle.Wrap(aim.angle() - this.facing.angle());
@@ -107,6 +128,7 @@ class PitchScene extends Phaser.Scene {
     this.ballBody.setAcceleration(0);
     this.ballBody.setMaxVelocity(feel.kickPowerMax);
     this.ballBody.setVelocity(aim.x * power, aim.y * power);
+    this.possessing = false;
     this.lastShotAt = now;
   }
 
@@ -143,6 +165,8 @@ class PitchScene extends Phaser.Scene {
 
   private resetBall(): void {
     const p = feel.pitch;
+    this.possessing = false;
+    this.ballBody.setDrag(feel.ballFriction);
     this.ballBody.setAcceleration(0).setVelocity(0);
     this.ballBody.reset((p.left + p.right) / 2, (p.top + p.bottom) / 2);
   }
