@@ -16,7 +16,13 @@ describe('goal detection', () => {
   });
 });
 
-describe('score reset', () => {
+describe('scoring and reset', () => {
+  it('awards the AI side when the ball crosses the human goal line', () => {
+    const crossed = crossedGoalLine({ x: 59, y: 325 }, 10, pitch);
+    expect(crossed).toBe('left');
+    expect(addGoal(resetScore(), crossed!)).toEqual({ left: 0, right: 1 });
+  });
+
   it('clears both sides after goals', () => {
     const score = addGoal(addGoal(resetScore(), 'left'), 'right');
     expect(score).toEqual({ left: 1, right: 1 });
