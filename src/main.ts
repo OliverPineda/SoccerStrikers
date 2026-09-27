@@ -206,8 +206,7 @@ class PitchScene extends Phaser.Scene {
   private goal(side: 'left' | 'right', time: number): void {
     this.score = addGoal(this.score, side);
     this.updateScore();
-    this.playerBody.setAcceleration(0).setVelocity(0);
-    this.aiBody.setAcceleration(0).setVelocity(0);
+    this.resetPlayers();
     this.resetBall();
     this.pausedUntil = time + feel.resetPauseMs;
   }
@@ -225,14 +224,18 @@ class PitchScene extends Phaser.Scene {
     this.score = resetScore();
     this.updateScore();
     this.resetBall();
+    this.resetPlayers();
+    this.pausedUntil = this.time.now + feel.resetPauseMs;
+    this.lastShotAt = this.time.now;
+  }
+
+  private resetPlayers(): void {
     this.playerBody.setAcceleration(0).setVelocity(0);
     this.playerBody.reset(310, (feel.pitch.top + feel.pitch.bottom) / 2);
     this.aiBody.setAcceleration(0).setVelocity(0);
     this.aiBody.reset(690, (feel.pitch.top + feel.pitch.bottom) / 2);
     this.facing.human.set(1, 0);
     this.facing.ai.set(-1, 0);
-    this.pausedUntil = this.time.now + feel.resetPauseMs;
-    this.lastShotAt = this.time.now;
   }
 
   private updateScore(): void { scoreLabel.textContent = `${this.score.left} – ${this.score.right}`; }
