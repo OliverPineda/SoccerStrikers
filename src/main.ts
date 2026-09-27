@@ -3,6 +3,7 @@ import { feel } from './config';
 import { addGoal, crossedGoalLine, resetScore, type Score } from './rules';
 import { resolveCapture, type Owner } from './possession';
 import { canDeke, isDekeImmune, isDekeRecovering } from './deke';
+import { canAttemptHit, hitConnects } from './hit';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -28,6 +29,9 @@ class PitchScene extends Phaser.Scene {
   private lastDekeAt = -Infinity;
   private dekeImmunityUntil = -Infinity;
   private dekeRecoveryUntil = -Infinity;
+  private lastHitAt = -Infinity;
+  private aiKnockbackUntil = -Infinity;
+  private aiStunUntil = -Infinity;
 
   constructor() { super('pitch'); }
 
@@ -73,7 +77,7 @@ class PitchScene extends Phaser.Scene {
       this.owner === null && this.time.now - this.lastShotAt >= feel.shotCooldownMs,
     );
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,E,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,E,F,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.shoot('human', pointer.worldX, pointer.worldY));
     restartButton.addEventListener('click', () => this.restart());
     this.updateScore();
@@ -109,7 +113,13 @@ class PitchScene extends Phaser.Scene {
       ? new Phaser.Math.Vector2(p.left, (p.top + p.bottom) / 2)
       : new Phaser.Math.Vector2(this.ball.x, this.ball.y);
     const aiDirection = aiTarget.subtract(new Phaser.Math.Vector2(this.ai.x, this.ai.y)).normalize();
-    this.move('ai', aiDirection);
+    if (time < this.aiKnockbackUntil) {
+      this.aiBody.setMaxVelocity(feel.hitKnockbackSpeed);
+      this.aiBody.setAcceleration(0);
+    } else {
+      this.aiBody.setMaxVelocity(time < this.aiStunUntil ? feel.playerMaxSpeed * feel.aiStunSpeedMultiplier : feel.playerMaxSpeed);
+      this.move('ai', aiDirection);
+    }
     this.constrainPlayer(this.player);
     this.constrainPlayer(this.ai);
 
@@ -168,6 +178,7 @@ class PitchScene extends Phaser.Scene {
         this.ballBody.velocity.y + direction.y * feel.dekeBurstSpeed,
       );
     }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.F)) this.hit(time);
     this.constrainBall();
     const goal = crossedGoalLine(this.ball, feel.ballRadius, feel.pitch);
     if (goal) this.goal(goal, time);
@@ -180,6 +191,22 @@ class PitchScene extends Phaser.Scene {
   private move(who: Owner, direction: Phaser.Math.Vector2): void {
     this.body(who).setAcceleration(direction.x * feel.playerAcceleration, direction.y * feel.playerAcceleration);
     if (direction.lengthSq() > 0) this.facing[who].copy(direction);
+  }
+
+  private hit(time: number): void {
+    if (!canAttemptHit(this.owner, time, this.lastHitAt, feel.hitCooldownMs)) return;
+    this.lastHitAt = time;
+    const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.ai.x, this.ai.y);
+    if (!hitConnects(this.owner, distance, feel.hitRange)) return;
+    this.owner = null;
+    this.aiKnockbackUntil = time + feel.aiKnockbackMs;
+    this.aiStunUntil = time + feel.aiStunMs;
+    const away = new Phaser.Math.Vector2(this.ai.x - this.player.x, this.ai.y - this.player.y);
+    if (away.lengthSq() === 0) away.copy(this.facing.human);
+    away.normalize();
+    this.aiBody.setAcceleration(0);
+    this.aiBody.setMaxVelocity(feel.hitKnockbackSpeed);
+    this.aiBody.setVelocity(away.x * feel.hitKnockbackSpeed, away.y * feel.hitKnockbackSpeed);
   }
 
   private shoot(who: Owner, targetX?: number, targetY?: number): void {
@@ -245,7 +272,11 @@ class PitchScene extends Phaser.Scene {
     this.lastDekeAt = -Infinity;
     this.dekeImmunityUntil = -Infinity;
     this.dekeRecoveryUntil = -Infinity;
+    this.lastHitAt = -Infinity;
+    this.aiKnockbackUntil = -Infinity;
+    this.aiStunUntil = -Infinity;
     this.playerBody.setMaxVelocity(feel.playerMaxSpeed);
+    this.aiBody.setMaxVelocity(feel.playerMaxSpeed);
     this.ballBody.setDrag(feel.ballFriction);
     this.ballBody.setAcceleration(0).setVelocity(0);
     this.ballBody.reset((p.left + p.right) / 2, (p.top + p.bottom) / 2);
