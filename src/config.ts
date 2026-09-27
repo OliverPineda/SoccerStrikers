@@ -14,7 +14,7 @@ export const feel = {
   dribbleTargetDistance: 31,
   dribbleFollowGain: 12,
   dribbleTurnRateDegrees: 540,
-  possessionCaptureMaxSpeed: 650,
+  possessionCaptureMaxSpeed: 400,
   dribbleMaxSpeed: 650,
   aiShootRange: 190,
   kickPowerMin: 460,
