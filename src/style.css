@@ -1,0 +1,8 @@
+html, body { margin: 0; width: 100%; height: 100%; background: #102c23; color: #f7f5e9; font-family: system-ui, sans-serif; }
+#app { min-height: 100%; display: flex; flex-direction: column; align-items: center; }
+#hud { width: min(100%, 1000px); box-sizing: border-box; padding: 14px 22px; display: flex; align-items: center; justify-content: center; gap: 24px; }
+#score { font-size: 28px; font-weight: 700; min-width: 80px; text-align: center; }
+button { background: #f7f5e9; color: #173a2d; border: 0; border-radius: 5px; padding: 9px 15px; font: inherit; font-weight: 700; cursor: pointer; }
+button:hover { background: #ffcf4d; }
+#game { width: min(100vw, 1000px); }
+canvas { display: block; max-width: 100%; }
