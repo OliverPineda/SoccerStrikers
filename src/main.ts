@@ -4,6 +4,7 @@ import { addGoal, crossedGoalLine, resetScore, type Score } from './rules';
 import { resolveCapture, type Owner } from './possession';
 import { canDeke, isDekeImmune, isDekeRecovering } from './deke';
 import { canAttemptHit, hitConnects } from './hit';
+import { canRespawnPickup, withinPickupRadius } from './pickup';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -20,6 +21,10 @@ class PitchScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Arc;
   private ai!: Phaser.GameObjects.Arc;
   private ball!: Phaser.GameObjects.Arc;
+  private speedPickup!: Phaser.GameObjects.Rectangle;
+  private pickupAvailable = true;
+  private pickupRespawnAt = Infinity;
+  private speedBoostUntil: Record<Owner, number> = { human: -Infinity, ai: -Infinity };
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private facing: Record<Owner, Phaser.Math.Vector2> = {
     human: new Phaser.Math.Vector2(1, 0),
@@ -61,6 +66,13 @@ class PitchScene extends Phaser.Scene {
     this.player = this.add.circle(310, midY, feel.playerRadius, 0xffcf4d);
     this.ai = this.add.circle(690, midY, feel.playerRadius, 0xeb6464);
     this.ball = this.add.circle((p.left + p.right) / 2, midY, feel.ballRadius, 0xffffff);
+    this.speedPickup = this.add.rectangle(
+      p.left + (p.right - p.left) * feel.speedPickupSpawn.xFraction,
+      p.top + (p.bottom - p.top) * feel.speedPickupSpawn.yFraction,
+      feel.speedPickupSize,
+      feel.speedPickupSize,
+      0x69d9f5,
+    ).setAngle(45);
     this.physics.add.existing(this.player);
     this.physics.add.existing(this.ai);
     this.physics.add.existing(this.ball);
@@ -108,10 +120,7 @@ class PitchScene extends Phaser.Scene {
       this.dekeRecoveryUntil = this.dekeImmunityUntil + feel.dekeRecoveryMs;
     }
     const recovering = isDekeRecovering(time, this.dekeImmunityUntil, this.dekeRecoveryUntil);
-    this.playerBody.setMaxVelocity(
-      time < this.dekeImmunityUntil ? feel.playerMaxSpeed + feel.dekeBurstSpeed :
-        recovering ? feel.playerMaxSpeed * feel.dekeRecoverySpeedMultiplier : feel.playerMaxSpeed,
-    );
+    this.setHumanMaxSpeed(time, recovering);
     this.move('human', direction);
 
     const p = feel.pitch;
@@ -119,15 +128,15 @@ class PitchScene extends Phaser.Scene {
       ? new Phaser.Math.Vector2(p.left, (p.top + p.bottom) / 2)
       : new Phaser.Math.Vector2(this.ball.x, this.ball.y);
     const aiDirection = aiTarget.subtract(new Phaser.Math.Vector2(this.ai.x, this.ai.y)).normalize();
+    this.setAiMaxSpeed(time);
     if (time < this.aiKnockbackUntil) {
-      this.aiBody.setMaxVelocity(feel.hitKnockbackSpeed);
       this.aiBody.setAcceleration(0);
     } else {
-      this.aiBody.setMaxVelocity(time < this.aiStunUntil ? feel.playerMaxSpeed * feel.aiStunSpeedMultiplier : feel.playerMaxSpeed);
       this.move('ai', aiDirection);
     }
     this.constrainPlayer(this.player);
     this.constrainPlayer(this.ai);
+    this.updateSpeedPickup(time, recovering);
 
     const candidates = (['human', 'ai'] as const).map((who) => {
       const entity = this.entity(who);
@@ -197,6 +206,41 @@ class PitchScene extends Phaser.Scene {
   private move(who: Owner, direction: Phaser.Math.Vector2): void {
     this.body(who).setAcceleration(direction.x * feel.playerAcceleration, direction.y * feel.playerAcceleration);
     if (direction.lengthSq() > 0) this.facing[who].copy(direction);
+  }
+
+  private setHumanMaxSpeed(time: number, recovering: boolean): void {
+    const maxSpeed = time < this.dekeImmunityUntil ? feel.playerMaxSpeed + feel.dekeBurstSpeed :
+      recovering ? feel.playerMaxSpeed * feel.dekeRecoverySpeedMultiplier :
+        time < this.speedBoostUntil.human ? feel.playerMaxSpeed * feel.speedBoostMultiplier : feel.playerMaxSpeed;
+    this.playerBody.setMaxVelocity(maxSpeed);
+  }
+
+  private setAiMaxSpeed(time: number): void {
+    const maxSpeed = time < this.aiKnockbackUntil ? feel.hitKnockbackSpeed :
+      time < this.aiStunUntil ? feel.playerMaxSpeed * feel.aiStunSpeedMultiplier :
+        time < this.speedBoostUntil.ai ? feel.playerMaxSpeed * feel.speedBoostMultiplier : feel.playerMaxSpeed;
+    this.aiBody.setMaxVelocity(maxSpeed);
+  }
+
+  private updateSpeedPickup(time: number, recovering: boolean): void {
+    if (!this.pickupAvailable && canRespawnPickup(time, this.pickupRespawnAt)) {
+      this.pickupAvailable = true;
+      this.speedPickup.setVisible(true);
+    }
+    if (!this.pickupAvailable) return;
+    const contenders = (['human', 'ai'] as const)
+      .map((who) => ({ who, entity: this.entity(who) }))
+      .filter(({ entity }) => withinPickupRadius(entity, this.speedPickup, feel.speedPickupRadius))
+      .sort((a, b) => Phaser.Math.Distance.Between(a.entity.x, a.entity.y, this.speedPickup.x, this.speedPickup.y) -
+        Phaser.Math.Distance.Between(b.entity.x, b.entity.y, this.speedPickup.x, this.speedPickup.y));
+    if (contenders.length === 0) return;
+    const winner = contenders[0].who;
+    this.pickupAvailable = false;
+    this.speedPickup.setVisible(false);
+    this.pickupRespawnAt = time + feel.speedPickupRespawnMs;
+    this.speedBoostUntil[winner] = time + feel.speedBoostDurationMs;
+    if (winner === 'human') this.setHumanMaxSpeed(time, recovering);
+    else this.setAiMaxSpeed(time);
   }
 
   private hit(time: number): void {
@@ -293,6 +337,10 @@ class PitchScene extends Phaser.Scene {
     this.updateScore();
     this.resetBall();
     this.resetPlayers();
+    this.pickupAvailable = true;
+    this.pickupRespawnAt = Infinity;
+    this.speedPickup.setVisible(true);
+    this.speedBoostUntil = { human: -Infinity, ai: -Infinity };
     this.pausedUntil = this.time.now + feel.resetPauseMs;
     this.lastShotAt = this.time.now;
   }
