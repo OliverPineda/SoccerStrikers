@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { feel } from './config';
 import { addGoal, crossedGoalLine, resetScore, type Score } from './rules';
 import { resolveCapture, type Owner } from './possession';
+import { canDeke, isDekeImmune, isDekeRecovering } from './deke';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -24,6 +25,9 @@ class PitchScene extends Phaser.Scene {
   private score: Score = resetScore();
   private pausedUntil = 0;
   private lastShotAt = -Infinity;
+  private lastDekeAt = -Infinity;
+  private dekeImmunityUntil = -Infinity;
+  private dekeRecoveryUntil = -Infinity;
 
   constructor() { super('pitch'); }
 
@@ -69,7 +73,7 @@ class PitchScene extends Phaser.Scene {
       this.owner === null && this.time.now - this.lastShotAt >= feel.shotCooldownMs,
     );
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,E,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.shoot('human', pointer.worldX, pointer.worldY));
     restartButton.addEventListener('click', () => this.restart());
     this.updateScore();
@@ -86,6 +90,18 @@ class PitchScene extends Phaser.Scene {
     const x = Number(this.keys.D.isDown || this.keys.RIGHT.isDown) - Number(this.keys.A.isDown || this.keys.LEFT.isDown);
     const y = Number(this.keys.S.isDown || this.keys.DOWN.isDown) - Number(this.keys.W.isDown || this.keys.UP.isDown);
     const direction = new Phaser.Math.Vector2(x, y).normalize();
+    const dekeTriggered = Phaser.Input.Keyboard.JustDown(this.keys.E) &&
+      canDeke(this.owner, direction.lengthSq() > 0, time, this.lastDekeAt, feel.dekeCooldownMs);
+    if (dekeTriggered) {
+      this.lastDekeAt = time;
+      this.dekeImmunityUntil = time + feel.dekeImmunityMs;
+      this.dekeRecoveryUntil = this.dekeImmunityUntil + feel.dekeRecoveryMs;
+    }
+    const recovering = isDekeRecovering(time, this.dekeImmunityUntil, this.dekeRecoveryUntil);
+    this.playerBody.setMaxVelocity(
+      time < this.dekeImmunityUntil ? feel.playerMaxSpeed + feel.dekeBurstSpeed :
+        recovering ? feel.playerMaxSpeed * feel.dekeRecoverySpeedMultiplier : feel.playerMaxSpeed,
+    );
     this.move('human', direction);
 
     const p = feel.pitch;
@@ -102,8 +118,9 @@ class PitchScene extends Phaser.Scene {
       const distance = Phaser.Math.Distance.Between(entity.x, entity.y, this.ball.x, this.ball.y);
       const near = distance <= feel.possessionDistance;
       const entered = near && !this.wasNear[who];
-      this.wasNear[who] = near;
-      return { owner: who, distance, entered };
+      const suppressed = who === 'ai' && isDekeImmune(this.owner, time, this.dekeImmunityUntil);
+      this.wasNear[who] = near && !suppressed;
+      return { owner: who, distance, entered: entered && !suppressed };
     }).sort((a, b) => a.distance - b.distance);
     if (time - this.lastShotAt >= feel.shotCooldownMs) {
       const nextOwner = resolveCapture(this.owner, candidates, this.ballBody.speed, feel.possessionDistance, feel.possessionCaptureMaxSpeed);
@@ -140,6 +157,16 @@ class PitchScene extends Phaser.Scene {
       this.ballBody.setDrag(feel.ballFriction);
       this.ballBody.setAcceleration(0);
       this.ballBody.setMaxVelocity(feel.kickPowerMax);
+    }
+    if (dekeTriggered) {
+      this.playerBody.setVelocity(
+        this.playerBody.velocity.x + direction.x * feel.dekeBurstSpeed,
+        this.playerBody.velocity.y + direction.y * feel.dekeBurstSpeed,
+      );
+      this.ballBody.setVelocity(
+        this.ballBody.velocity.x + direction.x * feel.dekeBurstSpeed,
+        this.ballBody.velocity.y + direction.y * feel.dekeBurstSpeed,
+      );
     }
     this.constrainBall();
     const goal = crossedGoalLine(this.ball, feel.ballRadius, feel.pitch);
@@ -215,6 +242,10 @@ class PitchScene extends Phaser.Scene {
     const p = feel.pitch;
     this.owner = null;
     this.wasNear = { human: false, ai: false };
+    this.lastDekeAt = -Infinity;
+    this.dekeImmunityUntil = -Infinity;
+    this.dekeRecoveryUntil = -Infinity;
+    this.playerBody.setMaxVelocity(feel.playerMaxSpeed);
     this.ballBody.setDrag(feel.ballFriction);
     this.ballBody.setAcceleration(0).setVelocity(0);
     this.ballBody.reset((p.left + p.right) / 2, (p.top + p.bottom) / 2);
