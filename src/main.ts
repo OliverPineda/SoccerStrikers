@@ -7,9 +7,14 @@ import { canAttemptHit, hitConnects } from './hit';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
-app.innerHTML = '<div id="hud"><span id="score">0 – 0</span><button id="restart" type="button">Restart</button></div><div id="game"></div>';
+app.innerHTML = '<div id="hud"><span id="score">0 – 0</span><div id="cooldowns"><div class="cooldown"><span>Shoot</span><div class="track"><div id="shoot-fill" class="fill"></div></div></div><div class="cooldown"><span>Deke</span><div class="track"><div id="deke-fill" class="fill"></div></div></div><div class="cooldown"><span>Hit</span><div class="track"><div id="hit-fill" class="fill"></div></div></div></div><button id="restart" type="button">Restart</button></div><div id="game"></div>';
 const scoreLabel = document.querySelector<HTMLSpanElement>('#score')!;
 const restartButton = document.querySelector<HTMLButtonElement>('#restart')!;
+const cooldownFills = {
+  shoot: document.querySelector<HTMLDivElement>('#shoot-fill')!,
+  deke: document.querySelector<HTMLDivElement>('#deke-fill')!,
+  hit: document.querySelector<HTMLDivElement>('#hit-fill')!,
+};
 
 class PitchScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Arc;
@@ -90,6 +95,7 @@ class PitchScene extends Phaser.Scene {
   private body(owner: Owner): Phaser.Physics.Arcade.Body { return owner === 'human' ? this.playerBody : this.aiBody; }
 
   update(time: number, delta: number): void {
+    this.updateCooldownBars(time);
     if (time < this.pausedUntil) return;
     const x = Number(this.keys.D.isDown || this.keys.RIGHT.isDown) - Number(this.keys.A.isDown || this.keys.LEFT.isDown);
     const y = Number(this.keys.S.isDown || this.keys.DOWN.isDown) - Number(this.keys.W.isDown || this.keys.UP.isDown);
@@ -301,6 +307,17 @@ class PitchScene extends Phaser.Scene {
   }
 
   private updateScore(): void { scoreLabel.textContent = `${this.score.left} – ${this.score.right}`; }
+
+  private updateCooldownBars(time: number): void {
+    const cooldowns = [
+      [cooldownFills.shoot, this.lastShotAt, feel.shotCooldownMs],
+      [cooldownFills.deke, this.lastDekeAt, feel.dekeCooldownMs],
+      [cooldownFills.hit, this.lastHitAt, feel.hitCooldownMs],
+    ] as const;
+    for (const [fill, lastUsed, duration] of cooldowns) {
+      fill.style.width = `${Phaser.Math.Clamp((time - lastUsed) / duration, 0, 1) * 100}%`;
+    }
+  }
 }
 
 new Phaser.Game({
