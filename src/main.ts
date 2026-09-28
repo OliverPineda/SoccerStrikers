@@ -325,6 +325,10 @@ class PitchScene extends Phaser.Scene {
     this.lastHitAt = -Infinity;
     this.aiKnockbackUntil = -Infinity;
     this.aiStunUntil = -Infinity;
+    this.pickupAvailable = true;
+    this.pickupRespawnAt = Infinity;
+    this.speedPickup.setVisible(true);
+    this.speedBoostUntil = { human: -Infinity, ai: -Infinity };
     this.playerBody.setMaxVelocity(feel.playerMaxSpeed);
     this.aiBody.setMaxVelocity(feel.playerMaxSpeed);
     this.ballBody.setDrag(feel.ballFriction);
@@ -337,10 +341,6 @@ class PitchScene extends Phaser.Scene {
     this.updateScore();
     this.resetBall();
     this.resetPlayers();
-    this.pickupAvailable = true;
-    this.pickupRespawnAt = Infinity;
-    this.speedPickup.setVisible(true);
-    this.speedBoostUntil = { human: -Infinity, ai: -Infinity };
     this.pausedUntil = this.time.now + feel.resetPauseMs;
     this.lastShotAt = this.time.now;
   }
